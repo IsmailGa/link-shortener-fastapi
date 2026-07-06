@@ -35,7 +35,6 @@ async def lifespan(app: FastAPI):
         - Disconnect from Redis
         - Dispose database engine
     """
-    # --- Startup ---
     configure_logging(
         json_logs=settings.is_production,
         log_level="DEBUG" if settings.debug else "INFO",
@@ -46,11 +45,9 @@ async def lifespan(app: FastAPI):
         environment=settings.app_env,
     )
 
-    # Connect to services
     await redis_manager.connect()
     await rabbitmq_manager.connect()
 
-    # Setup and start scheduler
     setup_scheduler(cleanup_stale_links)
     scheduler.start()
 
@@ -58,7 +55,6 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # --- Shutdown ---
     logger.info("app_shutting_down")
 
     scheduler.shutdown(wait=False)
@@ -79,25 +75,21 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Middleware (order matters — outermost first)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Restrict in production
+        allow_origins=["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
     app.add_middleware(RequestIDMiddleware)
 
-    # Exception handlers
     register_exception_handlers(app)
 
-    # Routers
     app.include_router(api_v1_router)
-    app.include_router(redirect_router)  # Root-level redirect /{code}
+    app.include_router(redirect_router)
 
     return app
 
 
-# Module-level app instance for Gunicorn/Uvicorn
 app = create_app()
