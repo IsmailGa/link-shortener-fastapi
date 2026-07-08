@@ -14,7 +14,6 @@ async def test_auth_flow(client: AsyncClient):
     email = f"test_{uuid.uuid4().hex[:6]}@example.com"
     password = "supersecurepassword123"
 
-    # 1. Register
     reg_resp = await client.post(
         "/api/v1/auth/register",
         json={"email": email, "password": password},
@@ -25,11 +24,9 @@ async def test_auth_flow(client: AsyncClient):
     assert "refresh_token" in tokens
     assert tokens["token_type"] == "bearer"
 
-    # Decode token to check subject
     payload = decode_access_token(tokens["access_token"])
     assert "sub" in payload
 
-    # 2. Login
     login_resp = await client.post(
         "/api/v1/auth/login",
         json={"email": email, "password": password},
@@ -39,7 +36,6 @@ async def test_auth_flow(client: AsyncClient):
     assert "access_token" in login_tokens
     assert "refresh_token" in login_tokens
 
-    # 3. Refresh token
     refresh_resp = await client.post(
         "/api/v1/auth/refresh",
         json={"refresh_token": login_tokens["refresh_token"]},
@@ -55,7 +51,6 @@ async def test_anonymous_shorten_and_redirect(client: AsyncClient):
     """Test shortening a link anonymously and redirecting."""
     original_url = "https://example.com/some/long/path/to/resource"
 
-    # 1. Shorten Link
     resp = await client.post(
         "/api/v1/links",
         json={"url": original_url},
@@ -69,7 +64,6 @@ async def test_anonymous_shorten_and_redirect(client: AsyncClient):
 
     short_code = data["short_code"]
 
-    # 2. Redirect
     redir_resp = await client.get(f"/{short_code}", follow_redirects=False)
     assert redir_resp.status_code == 307
     assert redir_resp.headers["location"] == original_url
@@ -82,7 +76,6 @@ async def test_custom_alias(client: AsyncClient):
     url1 = "https://google.com"
     url2 = "https://yahoo.com"
 
-    # Create first
     resp1 = await client.post(
         "/api/v1/links",
         json={"url": url1, "custom_alias": alias},
@@ -90,7 +83,6 @@ async def test_custom_alias(client: AsyncClient):
     assert resp1.status_code == 201
     assert resp1.json()["short_code"] == alias
 
-    # Create second with same alias (should collide)
     resp2 = await client.post(
         "/api/v1/links",
         json={"url": url2, "custom_alias": alias},
@@ -110,7 +102,6 @@ async def test_anonymous_rate_limiting(client: AsyncClient):
     from app.core.rate_limiter import RateLimiter
     from unittest.mock import AsyncMock, patch
 
-    # Mock the rate limiter to return not allowed (allowed=False, remaining=0)
     with patch.object(RateLimiter, "check_rate_limit", AsyncMock(return_value=(False, 0))):
         resp = await client.post(
             "/api/v1/links",
@@ -123,7 +114,6 @@ async def test_anonymous_rate_limiting(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_authenticated_shorten_and_stats(client: AsyncClient):
     """Test shortening links as authenticated user and accessing statistics."""
-    # 1. Register and login
     email = f"stats_user_{uuid.uuid4().hex[:6]}@example.com"
     password = "superpassword123"
     reg_resp = await client.post(
@@ -133,7 +123,6 @@ async def test_authenticated_shorten_and_stats(client: AsyncClient):
     token = reg_resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # 2. Create link with owner
     url = "https://github.com/google"
     create_resp = await client.post(
         "/api/v1/links",
@@ -143,8 +132,6 @@ async def test_authenticated_shorten_and_stats(client: AsyncClient):
     assert create_resp.status_code == 201
     link_data = create_resp.json()
     short_code = link_data["short_code"]
-
-    # 3. Access stats (should be empty clicks but succeed)
     stats_resp = await client.get(
         f"/api/v1/links/{short_code}/stats",
         headers=headers,
@@ -154,8 +141,6 @@ async def test_authenticated_shorten_and_stats(client: AsyncClient):
     assert stats["short_code"] == short_code
     assert stats["total_clicks"] == 0
     assert len(stats["daily_clicks"]) == 0
-
-    # 4. Check stats access restriction for anonymous or other users
     anon_stats_resp = await client.get(f"/api/v1/links/{short_code}/stats")
     assert anon_stats_resp.status_code == 401
 
@@ -177,26 +162,22 @@ async def test_cleanup_stale_links():
     from sqlalchemy import select
 
     async with async_session_factory() as session:
-        # Create an owner user
         owner = User(email="owner@example.com", hashed_password="hashed_password")
         session.add(owner)
         await session.flush()
 
-        # 1. Stale anonymous link (31 days old, no clicks)
         stale_anon = Link(
             short_code="staleanon",
             original_url="https://example.com/stale-anon",
             created_at=datetime.now(timezone.utc) - timedelta(days=31),
             last_clicked_at=None,
         )
-        # 2. Fresh anonymous link (1 day old)
         fresh_anon = Link(
             short_code="freshanon",
             original_url="https://example.com/fresh-anon",
             created_at=datetime.now(timezone.utc) - timedelta(days=1),
             last_clicked_at=None,
         )
-        # 3. Stale authenticated link (31 days old, owned by owner)
         stale_auth = Link(
             short_code="staleauth",
             original_url="https://example.com/stale-auth",
@@ -208,10 +189,8 @@ async def test_cleanup_stale_links():
         session.add_all([stale_anon, fresh_anon, stale_auth])
         await session.commit()
 
-    # Run the cleanup service task
     await cleanup_stale_links()
 
-    # Query and verify
     async with async_session_factory() as session:
         stmt = select(Link).order_by(Link.short_code)
         res = await session.execute(stmt)
@@ -219,9 +198,6 @@ async def test_cleanup_stale_links():
         
         links_dict = {l.short_code: l.is_active for l in links}
         
-        # Verify stale anonymous link is soft-deleted
         assert links_dict["staleanon"] is False
-        # Verify fresh anonymous link is still active
         assert links_dict["freshanon"] is True
-        # Verify stale authenticated link is still active
         assert links_dict["staleauth"] is True

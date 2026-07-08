@@ -19,9 +19,8 @@ from app.repositories.link import LinkRepository
 
 logger = structlog.get_logger()
 
-# Batch settings
 BATCH_SIZE = 100
-FLUSH_INTERVAL = 5.0  # seconds
+FLUSH_INTERVAL = 5.0
 
 
 class ClickEventConsumer:
@@ -48,7 +47,6 @@ class ClickEventConsumer:
             durable=True,
         )
 
-        # Start periodic flush
         self._flush_task = asyncio.create_task(self._periodic_flush())
 
         logger.info("consumer_ready", queue="click_statistics")
@@ -85,9 +83,8 @@ class ClickEventConsumer:
                 click_repo = ClickRepository(session)
                 link_repo = LinkRepository(session)
 
-                # Prepare click event records
                 click_records = []
-                link_updates: dict[str, uuid.UUID] = {}  # short_code -> link_id
+                link_updates: dict[str, uuid.UUID] = {}
 
                 for event in events:
                     link_id = uuid.UUID(event["link_id"])
@@ -103,16 +100,12 @@ class ClickEventConsumer:
 
                     link_updates[event["short_code"]] = link_id
 
-                # Batch insert click events
                 inserted = await click_repo.bulk_create(click_records)
 
-                # Update click counts (one query per unique link)
                 for short_code, link_id in link_updates.items():
                     click_count = sum(
                         1 for e in events if e["short_code"] == short_code
                     )
-                    # Use increment_click_count for each event
-                    # (simpler than custom batch update)
                     await link_repo.increment_click_count(link_id)
 
                 await session.commit()
