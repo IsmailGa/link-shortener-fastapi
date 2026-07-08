@@ -1,5 +1,6 @@
 import uuid
-
+import csv
+import io
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,9 +24,9 @@ class StatsService:
         user_id: uuid.UUID,
     ) -> dict:
         """Get comprehensive statistics for a link.
-        
+
         Only the link owner can view stats.
-        
+
         Raises:
             ValueError: If link not found or not owned by user.
         """
@@ -35,7 +36,6 @@ class StatsService:
         if link.owner_id != user_id:
             raise ValueError("Not authorized to view stats for this link")
 
-        # Fetch all stats concurrently
         daily_clicks = await self.click_repo.get_daily_breakdown(link.id)
         top_referrers = await self.click_repo.get_top_referrers(link.id)
         top_user_agents = await self.click_repo.get_top_user_agents(link.id)
@@ -50,3 +50,26 @@ class StatsService:
             "top_referrers": top_referrers,
             "top_user_agents": top_user_agents,
         }
+
+    async def import_csv_stats(
+        self,
+        short_code: str,
+        user_id: uuid.UUID,
+    ) -> bytes:
+        """Generates CSV statistics in-memory and returns bytes."""
+        stats = await self.get_link_stats(short_code, user_id)
+
+        output = io.StringIO()
+        writer = csv.writer(output, dialect="excel")
+
+        writer.writerow(["Metric", "Value"])
+        writer.writerow(["Short Code", stats["short_code"]])
+        writer.writerow(["Original URL", stats["original_url"]])
+        writer.writerow(["Total Clicks", stats["total_clicks"]])
+        writer.writerow([])
+
+        writer.writerow(["Date", "Clicks Count"])
+        for day in stats["daily_clicks"]:
+            writer.writerow([day.get("date"), day.get("count")])
+
+        return output.getvalue().encode("utf-8")
